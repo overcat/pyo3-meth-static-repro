@@ -1,0 +1,16 @@
+[package]
+name = "meth-static-repro"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "meth_static_repro"
+crate-type = ["cdylib"]
+
+[dependencies]
+# 0.27.2 and older: no function is METH_STATIC.
+# 0.28.0 and newer: every `plain_*` function is METH_STATIC and `plain_onearg` is slower.
+# The candidate fix:
+# pyo3 = { git = "https://github.com/overcat/pyo3", rev = "b3d1fd3277ee15d25943593aaab2cf17d20e7198" }
+pyo3 = "=0.29.2"
