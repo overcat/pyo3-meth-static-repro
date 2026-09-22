@@ -1,6 +1,11 @@
-# PyO3 >= 0.28 sets `METH_STATIC` on every `#[pyfunction]`
+# PyO3 `METH_STATIC` regression reproducer
 
-This project reproduces the problem. `src/lib.rs` defines three pairs of functions with empty
+> **Fixed upstream:** [PyO3 PR #6428][fix-pr] was merged on September 22, 2026.
+> This repository is preserved for historical reference; no further updates are planned.
+> The default dependency remains pinned to the affected PyO3 0.29.2 to keep the bug reproducible.
+
+This project reproduces a regression introduced in PyO3 0.28 that set `METH_STATIC` on every
+plain `#[pyfunction]`. `src/lib.rs` defines three pairs of functions with empty
 bodies. There is one pair for each calling convention that PyO3 uses.
 
 ```rust
@@ -20,7 +25,7 @@ fn plain_kwargs(_kwargs: Option<&Bound<'_, PyDict>>) {}
 fn with_module_kwargs(_module: &Bound<'_, PyModule>, _kwargs: Option<&Bound<'_, PyDict>>) {}
 ```
 
-Since PyO3 0.28, the `PyMethodDef` of every `plain_*` function has the `METH_STATIC` flag. Its
+In affected versions, the `PyMethodDef` of every `plain_*` function has the `METH_STATIC` flag. Its
 `__self__` is `None` instead of the module. The `with_module_*` functions do not have the flag.
 They are the control group.
 
@@ -74,7 +79,7 @@ By PyO3 version, with CPython 3.14.6:
 | [`1999aa9ec`][culprit] (#5581) | yes | +0.2 | +2.7 | +0.2 |
 | 0.28.2 (0.28.0 and 0.28.1 are yanked) | yes | +0.2 | +2.5 | +0.1 |
 | 0.29.2 | yes | +0.0 | +2.7 | +0.1 |
-| [`b3d1fd32`][fix] (PyO3 main with the candidate fix) | no | +0.0 | +0.0 | +0.0 |
+| [`b3d1fd32`][fix] (original fix commit, before upstream merge) | no | +0.0 | +0.0 | +0.0 |
 
 By CPython version, with PyO3 0.29.2:
 
@@ -115,8 +120,9 @@ module.
 ### PyO3
 
 [#5581][culprit] moved the code that adds `METH_CLASS` and `METH_STATIC`. The code was in
-`impl_py_method_def`, which only `#[pymethods]` uses. It is now in `FnSpec::get_methoddef`, which
-`#[pyfunction]` also uses. The flag is selected by `FnType` ([`method.rs`][flags]):
+`impl_py_method_def`, which only `#[pymethods]` uses. In affected versions it is in
+`FnSpec::get_methoddef`, which `#[pyfunction]` also uses. The flag is selected by `FnType`
+([`method.rs`][flags]):
 
 ```rust
 FnType::FnStatic => quote! { .flags(#pyo3_path::ffi::METH_STATIC) },
@@ -200,7 +206,7 @@ The first two rows are handlers of bytecode instructions. Their symbols have the
 | `cfunction_vectorcall_FASTCALL_KEYWORDS` | 26.0 | 0.0 |
 | `_Py_Specialize_Call` | 0.5 | 0.0 |
 
-With the candidate fix ([`b3d1fd32`][fix]), `plain_onearg` takes 512.0 instructions per iteration,
+With the original fix commit ([`b3d1fd32`][fix]), `plain_onearg` takes 512.0 instructions per iteration,
 and 354.0 of them are outside the extension. Its control has the same counts. The call site is not
 specialized again.
 
@@ -210,16 +216,28 @@ identical, so `with_module_noargs` has no symbol.
 
 ## Fix and workaround
 
-Candidate fix: [`b3d1fd32`][fix]. It adds the two flags in `impl_py_method_def` again, so that only
-methods of a class get them. It also adds a test that a `#[pyfunction]` has neither flag. To test
-it, enable the commented-out `pyo3` line in `Cargo.toml` and run `.venv/bin/pip install .` again.
+[PyO3 PR #6428][fix-pr] was merged as [`1655cdfc`][merged-fix]. The fix adds the two flags in
+`impl_py_method_def` again, so that only methods of a class get them. It also adds a test that a
+`#[pyfunction]` has neither flag.
 
-Workaround: declare the function with `#[pyfunction(pass_module)]` and add an unused
-`&Bound<'_, PyModule>` first parameter. Such a function does not get the flag.
+To test the merged fix, replace the active `pyo3` dependency in `Cargo.toml` with:
+
+```toml
+pyo3 = { git = "https://github.com/PyO3/pyo3", rev = "1655cdfcbca94d59470e6c0edd4776c3ce421a5a" }
+```
+
+Then run `.venv/bin/pip install .` and `.venv/bin/python repro.py` again. The measurements of the
+fix above were taken with the original commit [`b3d1fd32`][fix], which is also the revision in
+the commented-out dependency in `Cargo.toml`.
+
+For affected versions, the workaround is to declare the function with `#[pyfunction(pass_module)]`
+and add an unused `&Bound<'_, PyModule>` first parameter. Such a function does not get the flag.
 
 [parent]: https://github.com/PyO3/pyo3/commit/bee3fda26e92272a8ecd874d4ab26f6eedcd3ef8
 [culprit]: https://github.com/PyO3/pyo3/commit/1999aa9ecbb0a7c82179f810bd50a9bde135f3eb
 [fix]: https://github.com/overcat/pyo3/commit/b3d1fd3277ee15d25943593aaab2cf17d20e7198
+[fix-pr]: https://github.com/PyO3/pyo3/pull/6428
+[merged-fix]: https://github.com/PyO3/pyo3/commit/1655cdfcbca94d59470e6c0edd4776c3ce421a5a
 [flags]: https://github.com/PyO3/pyo3/blob/v0.29.2/pyo3-macros-backend/src/method.rs#L1076
 [fnstatic]: https://github.com/PyO3/pyo3/blob/v0.29.2/pyo3-macros-backend/src/method.rs#L230-L231
 [pyfunction]: https://github.com/PyO3/pyo3/blob/v0.29.2/pyo3-macros-backend/src/pyfunction.rs#L362-L372
